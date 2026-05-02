@@ -62,6 +62,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Teleport Anchor", meta = (ClampMin = "100"))
 	float LobThrowSpeed = 1900.0f;
 
+	UPROPERTY(EditAnywhere, Category="Teleport Anchor", meta = (ClampMin = "100"))
+	float MaxTeleportDistance = 2200.0f;
+
 public:
 
 	/** Constructor */
@@ -87,6 +90,10 @@ protected:
 	void ThrowAnchor(float Speed, float UpwardsAim, float GravityScale);
 
 	void TeleportToAnchor();
+
+	bool FindSafeTeleportLocation(FVector& OutLocation) const;
+
+	void ShowAnchorMessage(const FString& Message) const;
 
 	UPROPERTY()
 	TObjectPtr<ATeleportAnchorProjectile> ActiveAnchor;

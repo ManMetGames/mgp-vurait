@@ -20,7 +20,8 @@ public:
 
 	void LaunchAnchor(const FVector& Direction, float Speed, float GravityScale);
 	bool HasLanded() const { return bHasLanded; }
-	FVector GetTeleportLocation() const { return TeleportLocation; }
+	FVector GetSurfacePoint() const { return SurfacePoint; }
+	FVector GetSurfaceNormal() const { return SurfaceNormal; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -36,7 +37,8 @@ private:
 	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
 
 	bool bHasLanded = false;
-	FVector TeleportLocation = FVector::ZeroVector;
+	FVector SurfacePoint = FVector::ZeroVector;
+	FVector SurfaceNormal = FVector::UpVector;
 
 	UFUNCTION()
 	void HandleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);

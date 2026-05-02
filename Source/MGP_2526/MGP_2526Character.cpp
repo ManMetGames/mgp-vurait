@@ -10,6 +10,7 @@
 #include "Components/InputComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Engine/Engine.h"
 #include "InputCoreTypes.h"
 #include "InputActionValue.h"
 #include "MGP_2526.h"
@@ -158,17 +159,94 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 
 void AMGP_2526Character::TeleportToAnchor()
 {
-	if (!ActiveAnchor || !ActiveAnchor->HasLanded())
+	if (!ActiveAnchor)
+	{
+		ShowAnchorMessage(TEXT("No anchor"));
+		return;
+	}
+
+	if (!ActiveAnchor->HasLanded())
+	{
+		ShowAnchorMessage(TEXT("Anchor not ready"));
+		return;
+	}
+
+	FVector TeleportLocation;
+	if (!FindSafeTeleportLocation(TeleportLocation))
 	{
 		return;
 	}
 
-	// Basic version for now. Proper space checks can come after this works.
-	const FVector TeleportLocation = ActiveAnchor->GetTeleportLocation();
 	TeleportTo(TeleportLocation, GetActorRotation(), false, true);
 
 	ActiveAnchor->Destroy();
 	ActiveAnchor = nullptr;
+}
+
+bool AMGP_2526Character::FindSafeTeleportLocation(FVector& OutLocation) const
+{
+	if (!ActiveAnchor || !GetWorld())
+	{
+		return false;
+	}
+
+	const float DistanceToAnchor = FVector::Dist(GetActorLocation(), ActiveAnchor->GetActorLocation());
+	if (DistanceToAnchor > MaxTeleportDistance)
+	{
+		ShowAnchorMessage(TEXT("Anchor too far"));
+		return false;
+	}
+
+	const FVector SurfaceNormal = ActiveAnchor->GetSurfaceNormal();
+	if (SurfaceNormal.Z < -0.2f)
+	{
+		ShowAnchorMessage(TEXT("Teleport blocked"));
+		return false;
+	}
+
+	const float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+
+	const FVector SurfacePoint = ActiveAnchor->GetSurfacePoint();
+	FVector CheckStart = SurfacePoint + SurfaceNormal * (CapsuleRadius + 35.0f) + FVector::UpVector * 120.0f;
+	FVector CheckEnd = CheckStart - FVector::UpVector * 350.0f;
+
+	FHitResult GroundHit;
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AnchorTeleportGround), false, this);
+	QueryParams.AddIgnoredActor(ActiveAnchor);
+
+	if (!GetWorld()->LineTraceSingleByChannel(GroundHit, CheckStart, CheckEnd, ECC_Visibility, QueryParams))
+	{
+		ShowAnchorMessage(TEXT("No ground"));
+		return false;
+	}
+
+	if (GroundHit.ImpactNormal.Z < 0.55f)
+	{
+		ShowAnchorMessage(TEXT("Teleport blocked"));
+		return false;
+	}
+
+	const FVector CandidateLocation = GroundHit.ImpactPoint + FVector::UpVector * (CapsuleHalfHeight + 3.0f);
+	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
+
+	// Same rough shape as the player capsule, just checking the spot before moving.
+	if (GetWorld()->OverlapBlockingTestByChannel(CandidateLocation, FQuat::Identity, ECC_Pawn, CapsuleShape, QueryParams))
+	{
+		ShowAnchorMessage(TEXT("Teleport blocked"));
+		return false;
+	}
+
+	OutLocation = CandidateLocation;
+	return true;
+}
+
+void AMGP_2526Character::ShowAnchorMessage(const FString& Message) const
+{
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow, Message);
+	}
 }
 
 void AMGP_2526Character::DoMove(float Right, float Forward)
