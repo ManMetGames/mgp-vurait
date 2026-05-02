@@ -10,6 +10,7 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
+class ATeleportAnchorProjectile;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -49,6 +50,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* MouseLookAction;
 
+	UPROPERTY(EditAnywhere, Category="Teleport Anchor")
+	TSubclassOf<ATeleportAnchorProjectile> AnchorProjectileClass;
+
+	UPROPERTY(EditAnywhere, Category="Teleport Anchor", meta = (ClampMin = "0"))
+	float AnchorSpawnDistance = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category="Teleport Anchor", meta = (ClampMin = "100"))
+	float StraightThrowSpeed = 2800.0f;
+
+	UPROPERTY(EditAnywhere, Category="Teleport Anchor", meta = (ClampMin = "100"))
+	float LobThrowSpeed = 1900.0f;
+
 public:
 
 	/** Constructor */
@@ -66,6 +79,15 @@ protected:
 
 	/** Called for looking input */
 	void Look(const FInputActionValue& Value);
+
+	void ThrowStraightAnchor();
+
+	void ThrowLobAnchor();
+
+	void ThrowAnchor(float Speed, float UpwardsAim, float GravityScale);
+
+	UPROPERTY()
+	TObjectPtr<ATeleportAnchorProjectile> ActiveAnchor;
 
 public:
 

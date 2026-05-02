@@ -7,10 +7,13 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Controller.h"
+#include "Components/InputComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputCoreTypes.h"
 #include "InputActionValue.h"
 #include "MGP_2526.h"
+#include "TeleportAnchorProjectile.h"
 
 AMGP_2526Character::AMGP_2526Character()
 {
@@ -48,6 +51,8 @@ AMGP_2526Character::AMGP_2526Character()
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+
+	AnchorProjectileClass = ATeleportAnchorProjectile::StaticClass();
 }
 
 void AMGP_2526Character::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -70,6 +75,9 @@ void AMGP_2526Character::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	{
 		UE_LOG(LogMGP_2526, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
 	}
+
+	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMGP_2526Character::ThrowStraightAnchor);
+	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMGP_2526Character::ThrowLobAnchor);
 }
 
 void AMGP_2526Character::Move(const FInputActionValue& Value)
@@ -88,6 +96,58 @@ void AMGP_2526Character::Look(const FInputActionValue& Value)
 
 	// route the input
 	DoLook(LookAxisVector.X, LookAxisVector.Y);
+}
+
+void AMGP_2526Character::ThrowStraightAnchor()
+{
+	// Flatter throw.
+	ThrowAnchor(StraightThrowSpeed, 0.03f, 0.25f);
+}
+
+void AMGP_2526Character::ThrowLobAnchor()
+{
+	// Higher throw.
+	ThrowAnchor(LobThrowSpeed, 0.35f, 0.9f);
+}
+
+void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float GravityScale)
+{
+	if (!AnchorProjectileClass || !FollowCamera)
+	{
+		return;
+	}
+
+	if (ActiveAnchor)
+	{
+		// Only keeping one anchor active for this first version.
+		ActiveAnchor->Destroy();
+		ActiveAnchor = nullptr;
+	}
+
+	const FVector CameraDirection = FollowCamera->GetForwardVector();
+	const FVector ThrowDirection = (CameraDirection + FVector::UpVector * UpwardsAim).GetSafeNormal();
+
+	// Spawning it a bit away from the body avoids it clipping into the player.
+	const FVector HandOffset = GetActorForwardVector() * 55.0f + GetActorRightVector() * 32.0f + FVector::UpVector * 70.0f;
+	const FVector SpawnLocation = GetActorLocation() + HandOffset + CameraDirection * AnchorSpawnDistance;
+	const FRotator SpawnRotation = ThrowDirection.Rotation();
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.Instigator = this;
+	// The spawn should not fail just because the player is near a wall.
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ActiveAnchor = GetWorld()->SpawnActor<ATeleportAnchorProjectile>(
+		AnchorProjectileClass,
+		SpawnLocation,
+		SpawnRotation,
+		SpawnParams);
+
+	if (ActiveAnchor)
+	{
+		ActiveAnchor->LaunchAnchor(ThrowDirection, Speed, GravityScale);
+	}
 }
 
 void AMGP_2526Character::DoMove(float Right, float Forward)
