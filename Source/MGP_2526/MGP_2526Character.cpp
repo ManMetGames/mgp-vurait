@@ -20,13 +20,13 @@ AMGP_2526Character::AMGP_2526Character()
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 		
-	// Don't rotate when the controller rotates. Let that just affect the camera.
+	// First person needs the player to turn with the camera.
 	bUseControllerRotationPitch = false;
-	bUseControllerRotationYaw = false;
+	bUseControllerRotationYaw = true;
 	bUseControllerRotationRoll = false;
 
 	// Configure character movement
-	GetCharacterMovement()->bOrientRotationToMovement = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
 
 	// Note: For faster iteration times these variables, and many more, can be tweaked in the Character Blueprint
@@ -38,16 +38,21 @@ AMGP_2526Character::AMGP_2526Character()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 	GetCharacterMovement()->BrakingDecelerationFalling = 1500.0f;
 
-	// Create a camera boom (pulls in towards the player if there is a collision)
+	// Reusing the boom, just pulled into the head for first person.
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = 400.0f;
+	CameraBoom->TargetArmLength = 0.0f;
+	CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f));
 	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bDoCollisionTest = false;
 
 	// Create a follow camera
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+
+	// Hides the template body from our own camera.
+	GetMesh()->SetOwnerNoSee(true);
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
@@ -127,9 +132,9 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 	const FVector CameraDirection = FollowCamera->GetForwardVector();
 	const FVector ThrowDirection = (CameraDirection + FVector::UpVector * UpwardsAim).GetSafeNormal();
 
-	// Spawning it a bit away from the body avoids it clipping into the player.
-	const FVector HandOffset = GetActorForwardVector() * 55.0f + GetActorRightVector() * 32.0f + FVector::UpVector * 70.0f;
-	const FVector SpawnLocation = GetActorLocation() + HandOffset + CameraDirection * AnchorSpawnDistance;
+	// Spawning it slightly to the right feels closer to a hand throw.
+	const FVector HandOffset = FollowCamera->GetRightVector() * 28.0f - FVector::UpVector * 18.0f;
+	const FVector SpawnLocation = FollowCamera->GetComponentLocation() + CameraDirection * AnchorSpawnDistance + HandOffset;
 	const FRotator SpawnRotation = ThrowDirection.Rotation();
 
 	FActorSpawnParameters SpawnParams;
