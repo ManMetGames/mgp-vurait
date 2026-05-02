@@ -86,6 +86,8 @@ protected:
 
 	void ThrowAnchor(float Speed, float UpwardsAim, float GravityScale);
 
+	void TeleportToAnchor();
+
 	UPROPERTY()
 	TObjectPtr<ATeleportAnchorProjectile> ActiveAnchor;
 

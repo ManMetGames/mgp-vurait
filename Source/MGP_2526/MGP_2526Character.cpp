@@ -83,6 +83,7 @@ void AMGP_2526Character::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMGP_2526Character::ThrowStraightAnchor);
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMGP_2526Character::ThrowLobAnchor);
+	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMGP_2526Character::TeleportToAnchor);
 }
 
 void AMGP_2526Character::Move(const FInputActionValue& Value)
@@ -153,6 +154,21 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 	{
 		ActiveAnchor->LaunchAnchor(ThrowDirection, Speed, GravityScale);
 	}
+}
+
+void AMGP_2526Character::TeleportToAnchor()
+{
+	if (!ActiveAnchor || !ActiveAnchor->HasLanded())
+	{
+		return;
+	}
+
+	// Basic version for now. Proper space checks can come after this works.
+	const FVector TeleportLocation = ActiveAnchor->GetTeleportLocation();
+	TeleportTo(TeleportLocation, GetActorRotation(), false, true);
+
+	ActiveAnchor->Destroy();
+	ActiveAnchor = nullptr;
 }
 
 void AMGP_2526Character::DoMove(float Right, float Forward)

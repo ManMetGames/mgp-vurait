@@ -86,6 +86,7 @@ void ATeleportAnchorProjectile::HandleHit(UPrimitiveComponent* HitComponent, AAc
 		ProjectileMovement->Deactivate();
 	}
 
+	TeleportLocation = Hit.ImpactPoint + Hit.ImpactNormal * 90.0f;
 	SetActorLocation(Hit.ImpactPoint + Hit.ImpactNormal * 18.0f);
 	SetActorRotation(Hit.ImpactNormal.Rotation());
 }
