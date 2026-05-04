@@ -20,6 +20,7 @@ public:
 
 	void LaunchAnchor(const FVector& Direction, float Speed, float GravityScale);
 	bool HasLanded() const { return bHasLanded; }
+	bool IsValidSurface() const { return bIsValidSurface; }
 	FVector GetSurfacePoint() const { return SurfacePoint; }
 	FVector GetSurfaceNormal() const { return SurfaceNormal; }
 
@@ -37,6 +38,7 @@ private:
 	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
 
 	bool bHasLanded = false;
+	bool bIsValidSurface = false;
 	FVector SurfacePoint = FVector::ZeroVector;
 	FVector SurfaceNormal = FVector::UpVector;
 

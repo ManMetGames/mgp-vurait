@@ -72,6 +72,10 @@ public:
 
 protected:
 
+	virtual void BeginPlay() override;
+
+	virtual void Tick(float DeltaSeconds) override;
+
 	/** Initialize input action bindings */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
@@ -99,10 +103,22 @@ protected:
 
 	bool IsGeometryOverlapping(const FVector& Location, const FCollisionShape& Shape, const FCollisionQueryParams& QueryParams) const;
 
+	void UpdateCheckpointAndHazards();
+
+	void SaveCheckpoint(AActor* CheckpointActor);
+
+	void ResetToCheckpoint();
+
 	void ShowAnchorMessage(const FString& Message) const;
 
 	UPROPERTY()
 	TObjectPtr<ATeleportAnchorProjectile> ActiveAnchor;
+
+	UPROPERTY()
+	TObjectPtr<AActor> CurrentCheckpointActor;
+
+	FVector LastCheckpointLocation = FVector::ZeroVector;
+	FRotator LastCheckpointRotation = FRotator::ZeroRotator;
 
 public:
 

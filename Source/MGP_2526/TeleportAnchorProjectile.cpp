@@ -82,6 +82,8 @@ void ATeleportAnchorProjectile::HandleHit(UPrimitiveComponent* HitComponent, AAc
 	}
 
 	bHasLanded = true;
+	bIsValidSurface = (OtherActor && OtherActor->ActorHasTag(TEXT("TeleportSurface")))
+		|| (OtherComp && OtherComp->ComponentHasTag(TEXT("TeleportSurface")));
 
 	// Pushing it off the wall stops the mesh sinking into the surface.
 	if (ProjectileMovement)

@@ -4,6 +4,7 @@
 #include "Engine/LocalPlayer.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Engine/OverlapResult.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Controller.h"
@@ -59,6 +60,21 @@ AMGP_2526Character::AMGP_2526Character()
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
 
 	AnchorProjectileClass = ATeleportAnchorProjectile::StaticClass();
+}
+
+void AMGP_2526Character::BeginPlay()
+{
+	Super::BeginPlay();
+
+	LastCheckpointLocation = GetActorLocation();
+	LastCheckpointRotation = GetActorRotation();
+}
+
+void AMGP_2526Character::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	UpdateCheckpointAndHazards();
 }
 
 void AMGP_2526Character::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -222,6 +238,12 @@ void AMGP_2526Character::TeleportToAnchor()
 		return;
 	}
 
+	if (!ActiveAnchor->IsValidSurface())
+	{
+		ShowAnchorMessage(TEXT("Invalid surface"));
+		return;
+	}
+
 	FVector TeleportLocation;
 	if (!FindSafeTeleportLocation(TeleportLocation))
 	{
@@ -364,6 +386,100 @@ bool AMGP_2526Character::IsGeometryOverlapping(const FVector& Location, const FC
 	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
 
 	return World->OverlapAnyTestByObjectType(Location, FQuat::Identity, ObjectParams, Shape, QueryParams);
+}
+
+void AMGP_2526Character::UpdateCheckpointAndHazards()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const FVector ActorLocation = GetActorLocation();
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AnchorLevelBlocks), false, this);
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	TArray<FOverlapResult> Overlaps;
+	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
+	World->OverlapMultiByObjectType(Overlaps, ActorLocation, FQuat::Identity, ObjectParams, CapsuleShape, QueryParams);
+
+	// Main kill check for bricks the player is actually touching.
+	for (const FOverlapResult& Result : Overlaps)
+	{
+		AActor* HitActor = Result.GetActor();
+		if (HitActor && HitActor->ActorHasTag(TEXT("KillBrick")))
+		{
+			ResetToCheckpoint();
+			return;
+		}
+	}
+
+	FHitResult FloorHit;
+	const FVector TraceStart = ActorLocation;
+	const FVector TraceEnd = ActorLocation - FVector::UpVector * (CapsuleHalfHeight + 35.0f);
+
+	// This catches thin floors better than only using the capsule overlap.
+	World->LineTraceSingleByObjectType(FloorHit, TraceStart, TraceEnd, ObjectParams, QueryParams);
+	AActor* FloorActor = FloorHit.GetActor();
+	if (!FloorActor)
+	{
+		return;
+	}
+
+	if (FloorActor->ActorHasTag(TEXT("KillBrick")))
+	{
+		ResetToCheckpoint();
+		return;
+	}
+
+	if (FloorActor->ActorHasTag(TEXT("Checkpoint")))
+	{
+		SaveCheckpoint(FloorActor);
+	}
+}
+
+void AMGP_2526Character::SaveCheckpoint(AActor* CheckpointActor)
+{
+	if (!CheckpointActor || CurrentCheckpointActor == CheckpointActor)
+	{
+		return;
+	}
+
+	// Same checkpoint should not keep spamming the message.
+	CurrentCheckpointActor = CheckpointActor;
+
+	FVector CheckpointCentre;
+	FVector CheckpointExtent;
+	CheckpointActor->GetActorBounds(false, CheckpointCentre, CheckpointExtent);
+
+	// Respawn from the middle of the checkpoint, not where the player clipped it.
+	LastCheckpointLocation = CheckpointCentre;
+	LastCheckpointLocation.Z = CheckpointCentre.Z + CheckpointExtent.Z + GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 4.0f;
+	LastCheckpointRotation = GetActorRotation();
+	ShowAnchorMessage(TEXT("Checkpoint"));
+}
+
+void AMGP_2526Character::ResetToCheckpoint()
+{
+	if (ActiveAnchor)
+	{
+		ActiveAnchor->Destroy();
+		ActiveAnchor = nullptr;
+	}
+
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+	}
+
+	TeleportTo(LastCheckpointLocation, LastCheckpointRotation, false, false);
+	ShowAnchorMessage(TEXT("Reset"));
 }
 
 void AMGP_2526Character::ShowAnchorMessage(const FString& Message) const
