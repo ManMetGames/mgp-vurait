@@ -20,6 +20,7 @@ ATeleportAnchorProjectile::ATeleportAnchorProjectile()
 	CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	CollisionComponent->SetNotifyRigidBodyCollision(true);
+	CollisionComponent->BodyInstance.bUseCCD = true;
 	CollisionComponent->OnComponentHit.AddDynamic(this, &ATeleportAnchorProjectile::HandleHit);
 	SetRootComponent(CollisionComponent);
 
@@ -41,6 +42,10 @@ ATeleportAnchorProjectile::ATeleportAnchorProjectile()
 	ProjectileMovement->MaxSpeed = 3200.0f;
 	ProjectileMovement->ProjectileGravityScale = 0.35f;
 	ProjectileMovement->bRotationFollowsVelocity = true;
+	ProjectileMovement->bSweepCollision = true;
+	ProjectileMovement->bForceSubStepping = true;
+	ProjectileMovement->MaxSimulationTimeStep = 0.016f;
+	ProjectileMovement->MaxSimulationIterations = 8;
 	ProjectileMovement->bShouldBounce = false;
 	ProjectileMovement->bAutoActivate = false;
 }

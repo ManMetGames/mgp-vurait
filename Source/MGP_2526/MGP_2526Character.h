@@ -89,9 +89,15 @@ protected:
 
 	void ThrowAnchor(float Speed, float UpwardsAim, float GravityScale);
 
+	bool FindAnchorSpawnLocation(const FVector& CameraDirection, const FVector& HandOffset, FVector& OutLocation) const;
+
 	void TeleportToAnchor();
 
 	bool FindSafeTeleportLocation(FVector& OutLocation) const;
+
+	bool IsTeleportSpotClear(const FVector& Location, const FCollisionShape& CapsuleShape, const FCollisionQueryParams& QueryParams) const;
+
+	bool IsGeometryOverlapping(const FVector& Location, const FCollisionShape& Shape, const FCollisionQueryParams& QueryParams) const;
 
 	void ShowAnchorMessage(const FString& Message) const;
 

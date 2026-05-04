@@ -136,14 +136,19 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 
 	// Spawning it slightly to the right feels closer to a hand throw.
 	const FVector HandOffset = FollowCamera->GetRightVector() * 28.0f - FVector::UpVector * 18.0f;
-	const FVector SpawnLocation = FollowCamera->GetComponentLocation() + CameraDirection * AnchorSpawnDistance + HandOffset;
+	FVector SpawnLocation;
+	if (!FindAnchorSpawnLocation(CameraDirection, HandOffset, SpawnLocation))
+	{
+		ShowAnchorMessage(TEXT("Too close"));
+		return;
+	}
+
 	const FRotator SpawnRotation = ThrowDirection.Rotation();
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = this;
 	SpawnParams.Instigator = this;
-	// The spawn should not fail just because the player is near a wall.
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::DontSpawnIfColliding;
 
 	ActiveAnchor = GetWorld()->SpawnActor<ATeleportAnchorProjectile>(
 		AnchorProjectileClass,
@@ -155,6 +160,52 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 	{
 		ActiveAnchor->LaunchAnchor(ThrowDirection, Speed, GravityScale);
 	}
+}
+
+bool AMGP_2526Character::FindAnchorSpawnLocation(const FVector& CameraDirection, const FVector& HandOffset, FVector& OutLocation) const
+{
+	if (!FollowCamera || !GetWorld())
+	{
+		return false;
+	}
+
+	const FVector CameraLocation = FollowCamera->GetComponentLocation();
+	const FVector WantedLocation = CameraLocation + CameraDirection * AnchorSpawnDistance + HandOffset;
+	const FCollisionShape AnchorShape = FCollisionShape::MakeSphere(20.0f);
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AnchorSpawnCheck), false, this);
+	if (ActiveAnchor)
+	{
+		QueryParams.AddIgnoredActor(ActiveAnchor);
+	}
+
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	FHitResult SpawnHit;
+	const bool bBlocked = GetWorld()->SweepSingleByObjectType(
+		SpawnHit,
+		CameraLocation,
+		WantedLocation,
+		FQuat::Identity,
+		ObjectParams,
+		AnchorShape,
+		QueryParams);
+
+	if (bBlocked)
+	{
+		return false;
+	}
+
+	// Final overlap check, just in case the sweep starts too close to the surface.
+	if (GetWorld()->OverlapAnyTestByObjectType(WantedLocation, FQuat::Identity, ObjectParams, AnchorShape, QueryParams))
+	{
+		return false;
+	}
+
+	OutLocation = WantedLocation;
+	return true;
 }
 
 void AMGP_2526Character::TeleportToAnchor()
@@ -177,7 +228,11 @@ void AMGP_2526Character::TeleportToAnchor()
 		return;
 	}
 
-	TeleportTo(TeleportLocation, GetActorRotation(), false, true);
+	if (!TeleportTo(TeleportLocation, GetActorRotation(), false, false))
+	{
+		ShowAnchorMessage(TEXT("Teleport blocked"));
+		return;
+	}
 
 	ActiveAnchor->Destroy();
 	ActiveAnchor = nullptr;
@@ -198,47 +253,117 @@ bool AMGP_2526Character::FindSafeTeleportLocation(FVector& OutLocation) const
 	}
 
 	const FVector SurfaceNormal = ActiveAnchor->GetSurfaceNormal();
-	if (SurfaceNormal.Z < -0.2f)
-	{
-		ShowAnchorMessage(TEXT("Teleport blocked"));
-		return false;
-	}
-
-	const float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius();
-	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-
+	const float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius() + 3.0f;
+	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 8.0f;
 	const FVector SurfacePoint = ActiveAnchor->GetSurfacePoint();
-	FVector CheckStart = SurfacePoint + SurfaceNormal * (CapsuleRadius + 35.0f) + FVector::UpVector * 120.0f;
-	FVector CheckEnd = CheckStart - FVector::UpVector * 350.0f;
 
-	FHitResult GroundHit;
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AnchorTeleportGround), false, this);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AnchorTeleportCheck), false, this);
 	QueryParams.AddIgnoredActor(ActiveAnchor);
-
-	if (!GetWorld()->LineTraceSingleByChannel(GroundHit, CheckStart, CheckEnd, ECC_Visibility, QueryParams))
-	{
-		ShowAnchorMessage(TEXT("No ground"));
-		return false;
-	}
-
-	if (GroundHit.ImpactNormal.Z < 0.55f)
-	{
-		ShowAnchorMessage(TEXT("Teleport blocked"));
-		return false;
-	}
-
-	const FVector CandidateLocation = GroundHit.ImpactPoint + FVector::UpVector * (CapsuleHalfHeight + 3.0f);
 	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
 
-	// Same rough shape as the player capsule, just checking the spot before moving.
-	if (GetWorld()->OverlapBlockingTestByChannel(CandidateLocation, FQuat::Identity, ECC_Pawn, CapsuleShape, QueryParams))
+	FVector DesiredLocation = SurfacePoint + SurfaceNormal * (CapsuleRadius + 12.0f);
+	if (SurfaceNormal.Z > 0.5f)
 	{
-		ShowAnchorMessage(TEXT("Teleport blocked"));
+		DesiredLocation = SurfacePoint + FVector::UpVector * (CapsuleHalfHeight + 6.0f);
+	}
+	else if (SurfaceNormal.Z < -0.35f)
+	{
+		// Ceiling case: centre the capsule below the hit point so the top just clears it.
+		DesiredLocation = SurfacePoint - FVector::UpVector * (CapsuleHalfHeight + 6.0f);
+	}
+
+	FVector SideVector = FVector::CrossProduct(SurfaceNormal, FVector::UpVector).GetSafeNormal();
+	if (SideVector.IsNearlyZero())
+	{
+		SideVector = GetActorRightVector();
+	}
+
+	const FVector UpVector = FVector::UpVector;
+	const float StepSize = 45.0f;
+	TArray<FVector> Offsets = {
+		FVector::ZeroVector,
+		SideVector * StepSize,
+		-SideVector * StepSize,
+	};
+
+	if (SurfaceNormal.Z < -0.35f)
+	{
+		// Ceiling anchors only search below the ceiling.
+		Offsets.Add(-UpVector * StepSize);
+		Offsets.Add(-UpVector * StepSize * 2.0f);
+		Offsets.Add(SideVector * StepSize - UpVector * StepSize);
+		Offsets.Add(-SideVector * StepSize - UpVector * StepSize);
+	}
+	else
+	{
+		Offsets.Add(SurfaceNormal * StepSize);
+		Offsets.Add(SurfaceNormal * StepSize * 2.0f);
+		Offsets.Add(UpVector * StepSize);
+		Offsets.Add(-UpVector * StepSize);
+		Offsets.Add(SurfaceNormal * StepSize + UpVector * StepSize);
+		Offsets.Add(SurfaceNormal * StepSize - UpVector * StepSize);
+		Offsets.Add(SurfaceNormal * StepSize + SideVector * StepSize);
+		Offsets.Add(SurfaceNormal * StepSize - SideVector * StepSize);
+	}
+
+	for (const FVector& Offset : Offsets)
+	{
+		const FVector CandidateLocation = DesiredLocation + Offset;
+
+		// Tries a few nearby spots instead of failing on the first blocked point.
+		if (IsTeleportSpotClear(CandidateLocation, CapsuleShape, QueryParams))
+		{
+			OutLocation = CandidateLocation;
+			return true;
+		}
+	}
+
+	ShowAnchorMessage(TEXT("Teleport blocked"));
+	return false;
+}
+
+bool AMGP_2526Character::IsTeleportSpotClear(const FVector& Location, const FCollisionShape& CapsuleShape, const FCollisionQueryParams& QueryParams) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
 		return false;
 	}
 
-	OutLocation = CandidateLocation;
+	// Checks against geometry directly, not just the pawn collision profile.
+	if (IsGeometryOverlapping(Location, CapsuleShape, QueryParams))
+	{
+		return false;
+	}
+
+	const float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius() + 3.0f;
+	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 8.0f;
+	const FVector HeadLocation = Location + FVector::UpVector * (CapsuleHalfHeight - CapsuleRadius);
+	const FCollisionShape HeadShape = FCollisionShape::MakeSphere(CapsuleRadius);
+
+	// Extra head check for ceiling cases while jumping.
+	if (IsGeometryOverlapping(HeadLocation, HeadShape, QueryParams))
+	{
+		return false;
+	}
+
+	// No path sweep here, since teleporting should not care about the space between points.
 	return true;
+}
+
+bool AMGP_2526Character::IsGeometryOverlapping(const FVector& Location, const FCollisionShape& Shape, const FCollisionQueryParams& QueryParams) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return true;
+	}
+
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	return World->OverlapAnyTestByObjectType(Location, FQuat::Identity, ObjectParams, Shape, QueryParams);
 }
 
 void AMGP_2526Character::ShowAnchorMessage(const FString& Message) const
