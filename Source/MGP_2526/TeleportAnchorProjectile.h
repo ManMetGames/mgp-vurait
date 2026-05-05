@@ -21,6 +21,7 @@ public:
 	void LaunchAnchor(const FVector& Direction, float Speed, float GravityScale);
 	bool HasLanded() const { return bHasLanded; }
 	bool IsValidSurface() const { return bIsValidSurface; }
+	AActor* GetLandedActor() const { return LandedActor.Get(); }
 	FVector GetSurfacePoint() const { return SurfacePoint; }
 	FVector GetSurfaceNormal() const { return SurfaceNormal; }
 
@@ -39,6 +40,7 @@ private:
 
 	bool bHasLanded = false;
 	bool bIsValidSurface = false;
+	TWeakObjectPtr<AActor> LandedActor;
 	FVector SurfacePoint = FVector::ZeroVector;
 	FVector SurfaceNormal = FVector::UpVector;
 

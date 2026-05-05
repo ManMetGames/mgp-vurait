@@ -10,8 +10,17 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
+class UMaterialInterface;
 class ATeleportAnchorProjectile;
 struct FInputActionValue;
+
+struct FActivatorSection
+{
+	FString SectionPath;
+	TArray<TWeakObjectPtr<AActor>> Bricks;
+	int32 ActiveIndex = INDEX_NONE;
+	float TimeWithoutPrevious = 0.0f;
+};
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 
@@ -109,6 +118,20 @@ protected:
 
 	void ResetToCheckpoint();
 
+	void SetupActivatorBricks();
+
+	void UpdateActivatorAnchor();
+
+	void UpdateActivatorTimeouts(float DeltaSeconds);
+
+	void HandleActivatorAnchor(AActor* ActivatorActor);
+
+	void StartActivatorReleaseDelay();
+
+	void SetActivatorBrickState(AActor* Brick, bool bActive);
+
+	void DeactivateActivatorBrick(AActor* Brick);
+
 	void ShowAnchorMessage(const FString& Message) const;
 
 	UPROPERTY()
@@ -119,6 +142,19 @@ protected:
 
 	FVector LastCheckpointLocation = FVector::ZeroVector;
 	FRotator LastCheckpointRotation = FRotator::ZeroRotator;
+
+	TArray<FActivatorSection> ActivatorSections;
+
+	UPROPERTY()
+	TObjectPtr<ATeleportAnchorProjectile> LastProcessedActivatorAnchor;
+
+	TWeakObjectPtr<AActor> ActivatorBrickHeldByAnchor;
+
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> ActivatorActiveMaterial;
+
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> ActivatorInactiveMaterial;
 
 public:
 

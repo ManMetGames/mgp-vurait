@@ -4,6 +4,7 @@
 #include "Engine/LocalPlayer.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -12,10 +13,13 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
 #include "InputCoreTypes.h"
 #include "InputActionValue.h"
+#include "Materials/MaterialInterface.h"
 #include "MGP_2526.h"
 #include "TeleportAnchorProjectile.h"
+#include "TimerManager.h"
 
 AMGP_2526Character::AMGP_2526Character()
 {
@@ -59,6 +63,9 @@ AMGP_2526Character::AMGP_2526Character()
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
 
+	ActivatorActiveMaterial = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/MechanicMaterials/M_Activator_PurpleActive.M_Activator_PurpleActive")));
+	ActivatorInactiveMaterial = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/MechanicMaterials/M_Activator_PurpleInactive.M_Activator_PurpleInactive")));
+
 	AnchorProjectileClass = ATeleportAnchorProjectile::StaticClass();
 }
 
@@ -68,6 +75,8 @@ void AMGP_2526Character::BeginPlay()
 
 	LastCheckpointLocation = GetActorLocation();
 	LastCheckpointRotation = GetActorRotation();
+
+	SetupActivatorBricks();
 }
 
 void AMGP_2526Character::Tick(float DeltaSeconds)
@@ -75,6 +84,8 @@ void AMGP_2526Character::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	UpdateCheckpointAndHazards();
+	UpdateActivatorAnchor();
+	UpdateActivatorTimeouts(DeltaSeconds);
 }
 
 void AMGP_2526Character::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -143,8 +154,10 @@ void AMGP_2526Character::ThrowAnchor(float Speed, float UpwardsAim, float Gravit
 	if (ActiveAnchor)
 	{
 		// Only keeping one anchor active for this first version.
+		StartActivatorReleaseDelay();
 		ActiveAnchor->Destroy();
 		ActiveAnchor = nullptr;
+		LastProcessedActivatorAnchor = nullptr;
 	}
 
 	const FVector CameraDirection = FollowCamera->GetForwardVector();
@@ -226,6 +239,11 @@ bool AMGP_2526Character::FindAnchorSpawnLocation(const FVector& CameraDirection,
 
 void AMGP_2526Character::TeleportToAnchor()
 {
+	if (ActiveAnchor && !IsValid(ActiveAnchor))
+	{
+		ActiveAnchor = nullptr;
+	}
+
 	if (!ActiveAnchor)
 	{
 		ShowAnchorMessage(TEXT("No anchor"));
@@ -256,8 +274,10 @@ void AMGP_2526Character::TeleportToAnchor()
 		return;
 	}
 
+	StartActivatorReleaseDelay();
 	ActiveAnchor->Destroy();
 	ActiveAnchor = nullptr;
+	LastProcessedActivatorAnchor = nullptr;
 }
 
 bool AMGP_2526Character::FindSafeTeleportLocation(FVector& OutLocation) const
@@ -469,8 +489,10 @@ void AMGP_2526Character::ResetToCheckpoint()
 {
 	if (ActiveAnchor)
 	{
+		StartActivatorReleaseDelay();
 		ActiveAnchor->Destroy();
 		ActiveAnchor = nullptr;
+		LastProcessedActivatorAnchor = nullptr;
 	}
 
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
@@ -480,6 +502,238 @@ void AMGP_2526Character::ResetToCheckpoint()
 
 	TeleportTo(LastCheckpointLocation, LastCheckpointRotation, false, false);
 	ShowAnchorMessage(TEXT("Reset"));
+}
+
+void AMGP_2526Character::SetupActivatorBricks()
+{
+	ActivatorSections.Empty();
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor || !Actor->ActorHasTag(TEXT("ActivatorBrick")))
+		{
+			continue;
+		}
+
+		// Folder path is used as the section name for this chain.
+		const FString ActorFolderPath = Actor->GetFolderPath().ToString();
+		int32 SectionIndex = ActivatorSections.IndexOfByPredicate([&ActorFolderPath](const FActivatorSection& Section)
+		{
+			return Section.SectionPath == ActorFolderPath;
+		});
+
+		if (SectionIndex == INDEX_NONE)
+		{
+			SectionIndex = ActivatorSections.AddDefaulted();
+			ActivatorSections[SectionIndex].SectionPath = ActorFolderPath;
+		}
+
+		ActivatorSections[SectionIndex].Bricks.Add(Actor);
+	}
+
+	for (FActivatorSection& Section : ActivatorSections)
+	{
+		// Actor names decide the order inside each section.
+		Section.Bricks.Sort([](const TWeakObjectPtr<AActor>& Left, const TWeakObjectPtr<AActor>& Right)
+		{
+			return GetNameSafe(Left.Get()) < GetNameSafe(Right.Get());
+		});
+
+		for (const TWeakObjectPtr<AActor>& Brick : Section.Bricks)
+		{
+			SetActivatorBrickState(Brick.Get(), false);
+		}
+
+		if (Section.Bricks.Num() > 0)
+		{
+			// Every chain starts from its first brick.
+			Section.ActiveIndex = 0;
+			SetActivatorBrickState(Section.Bricks[0].Get(), true);
+		}
+	}
+}
+
+void AMGP_2526Character::UpdateActivatorAnchor()
+{
+	if (!ActiveAnchor || !IsValid(ActiveAnchor) || ActiveAnchor == LastProcessedActivatorAnchor)
+	{
+		return;
+	}
+
+	if (!ActiveAnchor->HasLanded() || !ActiveAnchor->IsValidSurface())
+	{
+		return;
+	}
+
+	AActor* LandedActor = ActiveAnchor->GetLandedActor();
+	if (LandedActor && LandedActor->ActorHasTag(TEXT("ActivatorBrick")))
+	{
+		// Only process the same landed anchor once.
+		HandleActivatorAnchor(LandedActor);
+		LastProcessedActivatorAnchor = ActiveAnchor;
+	}
+}
+
+void AMGP_2526Character::UpdateActivatorTimeouts(float DeltaSeconds)
+{
+	for (FActivatorSection& Section : ActivatorSections)
+	{
+		if (Section.ActiveIndex <= 0 || !Section.Bricks.IsValidIndex(Section.ActiveIndex))
+		{
+			Section.TimeWithoutPrevious = 0.0f;
+			continue;
+		}
+
+		AActor* CurrentBrick = Section.Bricks[Section.ActiveIndex].Get();
+		AActor* PreviousBrick = Section.Bricks[Section.ActiveIndex - 1].Get();
+		if (!CurrentBrick || !PreviousBrick || ActivatorBrickHeldByAnchor.Get() == CurrentBrick)
+		{
+			// Held bricks should not time out under the anchor.
+			Section.TimeWithoutPrevious = 0.0f;
+			continue;
+		}
+
+		if (PreviousBrick->ActorHasTag(TEXT("TeleportSurface")))
+		{
+			// Timer only starts once the last brick shuts off.
+			Section.TimeWithoutPrevious = 0.0f;
+			continue;
+		}
+
+		Section.TimeWithoutPrevious += DeltaSeconds;
+		if (Section.TimeWithoutPrevious >= 2.0f)
+		{
+			// Later bricks only stay open briefly once the last one shuts.
+			Section.ActiveIndex = INDEX_NONE;
+			Section.TimeWithoutPrevious = 0.0f;
+			DeactivateActivatorBrick(CurrentBrick);
+		}
+	}
+}
+
+void AMGP_2526Character::HandleActivatorAnchor(AActor* ActivatorActor)
+{
+	if (!ActivatorActor)
+	{
+		return;
+	}
+
+	for (FActivatorSection& Section : ActivatorSections)
+	{
+		const int32 HitIndex = Section.Bricks.IndexOfByPredicate([ActivatorActor](const TWeakObjectPtr<AActor>& Brick)
+		{
+			return Brick.Get() == ActivatorActor;
+		});
+
+		if (HitIndex == INDEX_NONE || HitIndex != Section.ActiveIndex)
+		{
+			continue;
+		}
+
+		const int32 NextIndex = HitIndex + 1;
+		if (Section.Bricks.IsValidIndex(NextIndex))
+		{
+			// Hitting the current brick opens the next one.
+			Section.ActiveIndex = NextIndex;
+			SetActivatorBrickState(Section.Bricks[NextIndex].Get(), true);
+		}
+		else
+		{
+			Section.ActiveIndex = INDEX_NONE;
+		}
+
+		ActivatorBrickHeldByAnchor = ActivatorActor;
+		return;
+	}
+}
+
+void AMGP_2526Character::StartActivatorReleaseDelay()
+{
+	AActor* HeldBrick = ActivatorBrickHeldByAnchor.Get();
+	if (!HeldBrick)
+	{
+		return;
+	}
+
+	ActivatorBrickHeldByAnchor = nullptr;
+
+	// Starts when the anchor leaves the brick.
+	FTimerHandle TimerHandle;
+	GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateUObject(this, &AMGP_2526Character::DeactivateActivatorBrick, HeldBrick), 1.5f, false);
+}
+
+void AMGP_2526Character::SetActivatorBrickState(AActor* Brick, bool bActive)
+{
+	if (!Brick)
+	{
+		return;
+	}
+
+	if (bActive)
+	{
+		// Active means it can catch the anchor.
+		Brick->Tags.AddUnique(TEXT("TeleportSurface"));
+	}
+	else
+	{
+		Brick->Tags.Remove(TEXT("TeleportSurface"));
+	}
+
+	TArray<UPrimitiveComponent*> Components;
+	Brick->GetComponents<UPrimitiveComponent>(Components);
+	for (UPrimitiveComponent* Primitive : Components)
+	{
+		if (!Primitive)
+		{
+			continue;
+		}
+
+		if (bActive)
+		{
+			Primitive->ComponentTags.AddUnique(TEXT("TeleportSurface"));
+		}
+		else
+		{
+			Primitive->ComponentTags.Remove(TEXT("TeleportSurface"));
+		}
+
+		if (UStaticMeshComponent* BrickMesh = Cast<UStaticMeshComponent>(Primitive))
+		{
+			// Material matches the gameplay state.
+			BrickMesh->SetMaterial(0, bActive ? ActivatorActiveMaterial : ActivatorInactiveMaterial);
+		}
+	}
+}
+
+void AMGP_2526Character::DeactivateActivatorBrick(AActor* Brick)
+{
+	SetActivatorBrickState(Brick, false);
+
+	for (FActivatorSection& Section : ActivatorSections)
+	{
+		bool bHasActiveBrick = false;
+		for (const TWeakObjectPtr<AActor>& ExistingBrick : Section.Bricks)
+		{
+			if (AActor* BrickActor = ExistingBrick.Get())
+			{
+				bHasActiveBrick |= BrickActor->ActorHasTag(TEXT("TeleportSurface"));
+			}
+		}
+
+		if (!bHasActiveBrick && Section.Bricks.Num() > 0)
+		{
+			// If the chain runs out, the first brick turns back on.
+			Section.ActiveIndex = 0;
+			SetActivatorBrickState(Section.Bricks[0].Get(), true);
+		}
+	}
 }
 
 void AMGP_2526Character::ShowAnchorMessage(const FString& Message) const
